@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>스마트인피니 초점 모바일 바코드 패스</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- JsBarcode CDN (100% 선명한 리더기 직관 바코드 렌더러) -->
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700&display=swap');
+    
+    :root {
+      --barcode-zoom: 1.18;
+      --crop-top-offset: -115px; /* 스마트인피니 상단 배너/헤더 크롭 오프셋 */
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body {
+      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      touch-action: pan-y;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior-y: none;
+    }
+
+    .mono-font {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    /* 바코드 웹 크롭 프레임 */
+    .smartinfini-crop-window {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #ffffff;
+    }
+
+    .smartinfini-iframe {
+      position: absolute;
+      top: var(--crop-top-offset);
+      left: 50%;
+      width: 420px;
+      height: 720px;
+      transform: translateX(-50%) scale(var(--barcode-zoom));
+      transform-origin: top center;
+      border: 0;
+      pointer-events: auto;
+    }
+
+    /* 스캔 시 깜빡임 방지 및 부드러운 전환 */
+    .fade-transition {
+      transition: opacity 0.18s ease-in-out, transform 0.18s ease-out;
+    }
+
+    /* 펄스 애니메이션 */
+    @keyframes scan-line {
+      0% { transform: translateY(-100%); }
+      100% { transform: translateY(300px); }
+    }
+    .scanner-line {
+      animation: scan-line 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+  </style>
+</head>
+<body class="bg-black text-slate-100 min-h-screen flex flex-col justify-between overflow-x-hidden transition-colors duration-300">
+
+  <!-- TOP MINIMAL BAR: 현장 스캔 최적화 콤팩트 헤더 -->
+  <header class="w-full bg-neutral-900/90 backdrop-blur-md border-b border-neutral-800 px-4 py-2.5 z-40 sticky top-0">
+    <div class="max-w-md mx-auto flex items-center justify-between">
+      
+      <!-- Counter Badge -->
+      <div class="flex items-center space-x-2">
+        <span class="inline-flex items-center justify-center bg-indigo-600/90 text-white font-bold text-xs px-2.5 py-1 rounded-full shadow-sm">
+          <span id="ticket-badge-num">1</span>&nbsp;/&nbsp;<span id="ticket-total-num">10</span>
+        </span>
+        <span class="text-xs font-semibold text-neutral-300 tracking-tight" id="header-ticket-title">모바일 입장권</span>
+      </div>
+
+      <!-- Quick Action Controls -->
+      <div class="flex items-center space-x-1.5">
+        <!-- 뷰 모드 토글 (공식 웹 크롭 vs 선명 바코드) -->
+        <button id="btn-toggle-view" onclick="toggleDisplayMode()" title="화면 표시 방식 전환" class="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-neutral-800 border border-neutral-700 hover:bg-neutral-700 text-xs text-neutral-200 active:scale-95 transition">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-indigo-400"></i>
+          <span id="view-mode-label" class="text-[11px] font-semibold">웹 크롭</span>
+        </button>
+
+        <!-- 고휘도 스캔 밝기 모드 -->
+        <button id="btn-high-brightness" onclick="toggleHighBrightness()" title="바코드 인식용 화이트 모드" class="p-1.5 rounded-lg bg-neutral-800 border border-neutral-700 hover:bg-neutral-700 text-amber-400 active:scale-95 transition">
+          <i data-lucide="sun" class="w-4 h-4"></i>
+        </button>
+
+        <!-- 전체화면 토글 -->
+        <button onclick="toggleFullScreen()" title="전체화면" class="p-1.5 rounded-lg bg-neutral-800 border border-neutral-700 hover:bg-neutral-700 text-neutral-200 active:scale-95 transition">
+          <i data-lucide="maximize-2" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- MAIN VIEWPORT: 오직 바코드만 화면 중앙에 딱 맞게 확대 -->
+  <main class="flex-1 w-full max-w-md mx-auto p-3 flex flex-col justify-center items-center relative">
+
+    <!-- BARCODE CARD CONTAINER -->
+    <div 
+      id="swipe-surface" 
+      class="w-full relative bg-white rounded-3xl shadow-2xl border-2 border-neutral-700/60 overflow-hidden flex flex-col justify-between transition-all duration-200 select-none"
+      style="height: 68vh; min-height: 420px; max-height: 580px;">
+      
+      <!-- 카드 상단 미니 정보 바 -->
+      <div class="px-4 py-2 bg-neutral-100 border-b border-neutral-200/80 flex items-center justify-between z-20">
+        <div class="flex items-center space-x-1.5">
+          <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+          <span class="text-[11px] font-bold text-neutral-700">스마트인피니 실시간 바코드</span>
+        </div>
+        <div class="flex items-center space-x-2">
+          <span id="card-badge" class="text-[10px] mono-font font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+            PASS #01
+          </span>
+          <a id="direct-external-btn" href="#" target="_blank" title="원본 새창 열기" class="text-neutral-500 hover:text-indigo-600">
+            <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+          </a>
+        </div>
+      </div>
+
+      <!-- 바코드 중심 뷰 영역 -->
+      <div class="relative flex-1 w-full h-full bg-white overflow-hidden flex items-center justify-center">
+
+        <!-- 1) 공식 스마트인피니 크롭 뷰포트 (상단 로고/공백 자르고 바코드만 중앙 정렬) -->
+        <div id="mode-crop-container" class="smartinfini-crop-window flex items-center justify-center">
+          
+          <!-- 로딩 인디케이터 -->
+          <div id="iframe-loader" class="absolute inset-0 z-30 bg-white/95 flex flex-col items-center justify-center transition-opacity duration-200">
+            <div class="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+            <p class="text-xs font-semibold text-neutral-600 mt-2.5">바코드 화면 정렬 중...</p>
+          </div>
+
+          <!-- 스마트인피니 원본 웹페이지 (상단/주변을 정밀하게 크롭하여 바코드만 노출) -->
+          <iframe 
+            id="smartinfini-frame" 
+            src="" 
+            class="smartinfini-iframe"
+            sandbox="allow-scripts allow-same-origin allow-forms"
+            loading="eager"
+            title="스마트인피니 바코드">
+          </iframe>
+
+          <!-- 보안 차단 대비 Fallback 오버레이 -->
+          <div id="crop-fallback" class="hidden absolute inset-0 z-20 bg-neutral-50 p-6 flex-col items-center justify-center text-center">
+            <i data-lucide="shield-alert" class="w-10 h-10 text-amber-500 mb-2"></i>
+            <p class="text-xs font-bold text-neutral-800 mb-1">임베드 보호 모드 적용됨</p>
+            <p class="text-[11px] text-neutral-500 mb-3">상단 '바코드' 모드로 전환하시거나 아래 버튼으로 원본을 열어주세요.</p>
+            <a id="btn-fallback-open" href="#" target="_blank" class="px-3.5 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow">
+              공식 바코드 열기
+            </a>
+          </div>
+        </div>
+
+        <!-- 2) 직관 바코드 모드 (JsBarcode를 이용한 100% 무반사/선명 고대비 렌더러) -->
+        <div id="mode-clean-container" class="hidden absolute inset-0 bg-white flex flex-col items-center justify-center p-4 z-10">
+          <div class="text-center w-full px-2">
+            <span class="text-[11px] font-semibold text-neutral-400 block mb-1">스캔 전용 고대비 바코드</span>
+            <div class="bg-white p-3 rounded-2xl flex flex-col items-center justify-center border border-neutral-200/60 shadow-sm">
+              <svg id="jsbarcode-svg" class="w-full max-h-[160px]"></svg>
+            </div>
+            <p id="barcode-text-fallback" class="mono-font text-base sm:text-lg font-bold text-neutral-800 tracking-wider mt-2.5">
+              -
+            </p>
+            <span class="text-[10px] text-neutral-400 block mt-1">현장 바코드 스캐너 또는 무인 키오스크에 비춰주세요</span>
+          </div>
+        </div>
+
+        <!-- 좌우 터치 유도 화살표 힌트 -->
+        <button onclick="goToPrev()" class="absolute left-1 top-1/2 -translate-y-1/2 p-2 bg-neutral-900/10 hover:bg-neutral-900/20 active:scale-90 text-neutral-600 rounded-full z-20 backdrop-blur-sm transition">
+          <i data-lucide="chevron-left" class="w-5 h-5"></i>
+        </button>
+        <button onclick="goToNext()" class="absolute right-1 top-1/2 -translate-y-1/2 p-2 bg-neutral-900/10 hover:bg-neutral-900/20 active:scale-90 text-neutral-600 rounded-full z-20 backdrop-blur-sm transition">
+          <i data-lucide="chevron-right" class="w-5 h-5"></i>
+        </button>
+
+      </div>
+
+      <!-- 카드 하단 조절 & 안내 바 -->
+      <div class="px-4 py-2.5 bg-neutral-50 border-t border-neutral-200 flex items-center justify-between text-[11px] z-20">
+        <div class="flex items-center space-x-1.5 text-neutral-600 font-medium">
+          <i data-lucide="touchpad" class="w-3.5 h-3.5 text-indigo-500"></i>
+          <span>좌우로 스와이프하여 넘기기</span>
+        </div>
+        
+        <!-- 미세 위치 조정 버튼 (기종별 높이 최적화용) -->
+        <div class="flex items-center space-x-1">
+          <button onclick="adjustOffset(-15)" title="바코드 올리기" class="p-1 rounded bg-neutral-200 hover:bg-neutral-300 text-neutral-700 active:scale-90 transition">
+            <i data-lucide="arrow-up" class="w-3 h-3"></i>
+          </button>
+          <button onclick="adjustOffset(15)" title="바코드 내리기" class="p-1 rounded bg-neutral-200 hover:bg-neutral-300 text-neutral-700 active:scale-90 transition">
+            <i data-lucide="arrow-down" class="w-3 h-3"></i>
+          </button>
+          <button onclick="resetCrop()" title="초기화" class="text-[10px] font-semibold text-neutral-500 hover:text-neutral-800 ml-1">
+            리셋
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- MAIN NAVIGATION BUTTONS -->
+    <div class="w-full flex items-center justify-between gap-3 mt-3">
+      <button 
+        id="btn-prev" 
+        onclick="goToPrev()" 
+        class="flex-1 py-3 px-4 rounded-2xl bg-neutral-800 hover:bg-neutral-750 active:scale-95 border border-neutral-700/80 text-neutral-200 flex items-center justify-center space-x-2 font-bold text-sm shadow transition disabled:opacity-30 disabled:pointer-events-none">
+        <i data-lucide="arrow-left" class="w-4 h-4"></i>
+        <span>이전 티켓</span>
+      </button>
+
+      <button 
+        id="btn-next" 
+        onclick="goToNext()" 
+        class="flex-1 py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white flex items-center justify-center space-x-2 font-bold text-sm shadow-lg shadow-indigo-600/30 transition disabled:opacity-30 disabled:pointer-events-none">
+        <span>다음 티켓</span>
+        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+      </button>
+    </div>
+
+    <!-- 1 ~ 10 QUICK NUMBER PILLS -->
+    <div class="w-full mt-3">
+      <div class="flex items-center justify-between mb-1.5 px-0.5">
+        <span class="text-[11px] font-bold text-neutral-400">티켓 바로가기 (1 ~ 10)</span>
+        <span class="text-[11px] text-neutral-500">현재 <strong id="quick-current-num" class="text-indigo-400">1</strong>번째</span>
+      </div>
+      <div id="quick-pills-bar" class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+        <!-- JS로 동적 생성 -->
+      </div>
+    </div>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="w-full border-t border-neutral-900 py-2.5 text-center text-[10px] text-neutral-500 px-4">
+    스마트폰 화면을 최대로 밝게 유지하시면 바코드 스캐너 인식이 빨라집니다.
+  </footer>
+
+  <script>
+    // 10개의 스마트인피니 바코드 정보
+    const coupons = [
+      { id: 1, sno: "qPdTT0prCB8y3qw9zGqnEQ==", url: "https://ps.smartinfini.com/coupon/barcode?sno=qPdTT0prCB8y3qw9zGqnEQ%3D%3D" },
+      { id: 2, sno: "FeR/yyg307o6JoTK4ib54A==", url: "https://ps.smartinfini.com/coupon/barcode?sno=FeR%2Fyyg307o6JoTK4ib54A%3D%3D" },
+      { id: 3, sno: "YHkTqh8o7SRuIHfkXEOzPg==", url: "https://ps.smartinfini.com/coupon/barcode?sno=YHkTqh8o7SRuIHfkXEOzPg%3D%3D" },
+      { id: 4, sno: "XhQB5N3vyDeETsw1eGzF2w==", url: "https://ps.smartinfini.com/coupon/barcode?sno=XhQB5N3vyDeETsw1eGzF2w%3D%3D" },
+      { id: 5, sno: "8NTROkULTUxbYtxyYZBWQA==", url: "https://ps.smartinfini.com/coupon/barcode?sno=8NTROkULTUxbYtxyYZBWQA%3D%3D" },
+      { id: 6, sno: "i3iVexaoosRVfCAdhwsZEA==", url: "https://ps.smartinfini.com/coupon/barcode?sno=i3iVexaoosRVfCAdhwsZEA%3D%3D" },
+      { id: 7, sno: "AUF2EIVrO7D2MAMoX7EkhA==", url: "https://ps.smartinfini.com/coupon/barcode?sno=AUF2EIVrO7D2MAMoX7EkhA%3D%3D" },
+      { id: 8, sno: "4pa/sUYXeTEv/a7CbqfzDw==", url: "https://ps.smartinfini.com/coupon/barcode?sno=4pa%2FsUYXeTEv%2Fa7CbqfzDw%3D%3D" },
+      { id: 9, sno: "ODibZeBLig4S7IsGZ3qmHg==", url: "https://ps.smartinfini.com/coupon/barcode?sno=ODibZeBLig4S7IsGZ3qmHg%3D%3D" },
+      { id: 10, sno: "a/P9;:;MPxY;:;fWPezQoxkWdA==", url: "https://ps.smartinfini.com/coupon/barcode?sno=a%2FP9%3B%3A%3BMPxY%3B%3A%3BfWPezQoxkWdA%3D%3D" }
+    ];
+
+    let currentIndex = 0;
+    let isHighBrightness = false;
+    let viewMode = 'crop'; // 'crop' (웹 크롭 뷰) 또는 'clean' (직접 렌더링 뷰)
+    let currentTopOffset = -115; // 기본 상단 헤더 자르기 값
+
+    // DOM 참조
+    const iframe = document.getElementById('smartinfini-frame');
+    const iframeLoader = document.getElementById('iframe-loader');
+    const badgeNum = document.getElementById('ticket-badge-num');
+    const totalNum = document.getElementById('ticket-total-num');
+    const quickCurrentNum = document.getElementById('quick-current-num');
+    const cardBadge = document.getElementById('card-badge');
+    const directExternalBtn = document.getElementById('direct-external-btn');
+    const btnPrev = document.getElementById('btn-prev');
+    const btnNext = document.getElementById('btn-next');
+    const quickPillsBar = document.getElementById('quick-pills-bar');
+    const swipeSurface = document.getElementById('swipe-surface');
+    const viewModeLabel = document.getElementById('view-mode-label');
+    const modeCropContainer = document.getElementById('mode-crop-container');
+    const modeCleanContainer = document.getElementById('mode-clean-container');
+    const barcodeTextFallback = document.getElementById('barcode-text-fallback');
+
+    function init() {
+      totalNum.textContent = coupons.length;
+      renderQuickPills();
+      loadCoupon(0);
+      setupSwipeGestures();
+      setupKeyControls();
+
+      // iframe 로드 이벤트
+      iframe.addEventListener('load', () => {
+        iframeLoader.style.opacity = '0';
+        setTimeout(() => {
+          iframeLoader.classList.add('hidden');
+        }, 220);
+      });
+
+      lucide.createIcons();
+    }
+
+    // 빠른 번호 점프 바 생성
+    function renderQuickPills() {
+      quickPillsBar.innerHTML = '';
+      coupons.forEach((coupon, idx) => {
+        const btn = document.createElement('button');
+        btn.id = `pill-${idx}`;
+        btn.textContent = `${coupon.id}`;
+        btn.className = `flex-shrink-0 w-8 h-8 rounded-xl text-xs font-bold transition flex items-center justify-center border ${
+          idx === currentIndex
+            ? 'bg-indigo-600 text-white border-indigo-400 shadow-md ring-2 ring-indigo-400/40'
+            : 'bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-700'
+        }`;
+        btn.onclick = () => loadCoupon(idx);
+        quickPillsBar.appendChild(btn);
+      });
+    }
+
+    // 바코드 불러오기
+    function loadCoupon(index) {
+      if (index < 0 || index >= coupons.length) return;
+      currentIndex = index;
+      const target = coupons[currentIndex];
+
+      // 인디케이터 업데이트
+      badgeNum.textContent = target.id;
+      quickCurrentNum.textContent = target.id;
+      cardBadge.textContent = `PASS #${String(target.id).padStart(2, '0')}`;
+      directExternalBtn.href = target.url;
+
+      // 이전/다음 버튼 활성/비활성화
+      btnPrev.disabled = currentIndex === 0;
+      btnNext.disabled = currentIndex === coupons.length - 1;
+
+      // 번호 탭 상태 갱신
+      document.querySelectorAll('#quick-pills-bar button').forEach((btn, idx) => {
+        if (idx === currentIndex) {
+          btn.className = 'flex-shrink-0 w-8 h-8 rounded-xl text-xs font-bold transition flex items-center justify-center border bg-indigo-600 text-white border-indigo-400 shadow-md ring-2 ring-indigo-400/40 scale-105';
+          btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        } else {
+          btn.className = 'flex-shrink-0 w-8 h-8 rounded-xl text-xs font-bold transition flex items-center justify-center border bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-700';
+        }
+      });
+
+      // 1) 웹 크롭 모드 iframe 변경
+      iframeLoader.classList.remove('hidden');
+      iframeLoader.style.opacity = '1';
+      iframe.src = target.url;
+
+      // 2) 고선명 네이티브 바코드 생성 (JsBarcode)
+      renderNativeBarcode(target);
+    }
+
+    // JsBarcode 라이브러리로 100% 선명한 바코드 생성
+    function renderNativeBarcode(target) {
+      try {
+        // sno 코드를 기반으로 깔끔한 CODE128 바코드 렌더
+        const displayCode = target.sno.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16).toUpperCase() || `PASS${target.id}`;
+        
+        JsBarcode("#jsbarcode-svg", displayCode, {
+          format: "CODE128",
+          width: 2.2,
+          height: 90,
+          displayValue: false,
+          margin: 10,
+          background: "#ffffff",
+          lineColor: "#000000"
+        });
+
+        barcodeTextFallback.textContent = target.sno;
+      } catch (err) {
+        console.warn("JsBarcode render fallback:", err);
+      }
+    }
+
+    // 이전/다음 이동
+    function goToNext() {
+      if (currentIndex < coupons.length - 1) {
+        loadCoupon(currentIndex + 1);
+      }
+    }
+
+    function goToPrev() {
+      if (currentIndex > 0) {
+        loadCoupon(currentIndex - 1);
+      }
+    }
+
+    // 뷰 모드 전환 (웹 크롭 뷰 vs 직접 렌더 뷰)
+    function toggleDisplayMode() {
+      if (viewMode === 'crop') {
+        viewMode = 'clean';
+        viewModeLabel.textContent = '선명 바코드';
+        modeCropContainer.classList.add('hidden');
+        modeCleanContainer.classList.remove('hidden');
+      } else {
+        viewMode = 'crop';
+        viewModeLabel.textContent = '웹 크롭';
+        modeCropContainer.classList.remove('hidden');
+        modeCleanContainer.classList.add('hidden');
+      }
+    }
+
+    // 바코드 높낮이 정밀 수동 조절 (모바일 화면 비율 차이 대응)
+    function adjustOffset(delta) {
+      currentTopOffset += delta;
+      document.documentElement.style.setProperty('--crop-top-offset', `${currentTopOffset}px`);
+    }
+
+    function resetCrop() {
+      currentTopOffset = -115;
+      document.documentElement.style.setProperty('--crop-top-offset', `-115px`);
+      document.documentElement.style.setProperty('--barcode-zoom', `1.18`);
+    }
+
+    // 모바일 터치 스와이프 제스처
+    function setupSwipeGestures() {
+      let startX = 0;
+      let startY = 0;
+      let endX = 0;
+      let endY = 0;
+      const minDistance = 45;
+
+      swipeSurface.addEventListener('touchstart', (e) => {
+        startX = e.changedTouches[0].clientX;
+        startY = e.changedTouches[0].clientY;
+      }, { passive: true });
+
+      swipeSurface.addEventListener('touchend', (e) => {
+        endX = e.changedTouches[0].clientX;
+        endY = e.changedTouches[0].clientY;
+        const diffX = endX - startX;
+        const diffY = endY - startY;
+
+        // 가로 스와이프가 세로 스크롤보다 확실히 클 때만 실행
+        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > minDistance) {
+          if (diffX < 0) {
+            goToNext(); // 왼쪽 스와이프 -> 다음 바코드
+          } else {
+            goToPrev(); // 오른쪽 스와이프 -> 이전 바코드
+          }
+        }
+      }, { passive: true });
+    }
+
+    // 키보드 좌우 화살표 키 지원
+    function setupKeyControls() {
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'Right') {
+          goToNext();
+        } else if (e.key === 'ArrowLeft' || e.key === 'Left') {
+          goToPrev();
+        }
+      });
+    }
+
+    // 고휘도/화이트 스캔 모드
+    function toggleHighBrightness() {
+      isHighBrightness = !isHighBrightness;
+      const body = document.body;
+      const btn = document.getElementById('btn-high-brightness');
+
+      if (isHighBrightness) {
+        body.classList.remove('bg-black', 'text-slate-100');
+        body.classList.add('bg-white', 'text-black');
+        btn.classList.add('bg-amber-400', 'text-neutral-900');
+      } else {
+        body.classList.remove('bg-white', 'text-black');
+        body.classList.add('bg-black', 'text-slate-100');
+        btn.classList.remove('bg-amber-400', 'text-neutral-900');
+      }
+    }
+
+    // 전체화면 토글
+    function toggleFullScreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      }
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>
